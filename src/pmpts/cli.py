@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import textwrap
@@ -18,6 +19,86 @@ except Exception:
 DEFAULT_ROOT = "/mnt/c/Users/Rubens/AppData/Roaming/Code/User/prompts"
 CONFIG_PATH = Path.home() / ".promptcli.json"
 SUFFIX = ".prompt.md"
+
+
+def detect_vscode_user_prompts_path() -> Path:
+    """Try to detect the user's VS Code 'User/prompts' directory across OSes.
+
+    Returns the most likely Path (does not guarantee it exists).
+    Order of checks:
+    - Windows default roaming path (when running on Windows)
+    - WSL: look for a Windows path via /mnt/c/Users/<User>/AppData/Roaming/Code/User/prompts
+    - Linux/macOS: ~/.config/Code/User/prompts and ~/.vscode/extensions (fallbacks)
+    """
+    home = Path.home()
+    # Platform-specific heuristics
+    # Windows (nt)
+    if sys.platform.startswith("win") or ("WINDOWS" in os.environ.get("OS", "")):
+        user = os.environ.get("USERPROFILE") or os.environ.get("HOMEPATH")
+        if user:
+            p = Path(user) / "AppData" / "Roaming" / "Code" / "User" / "prompts"
+            return p
+
+    # WSL - common mount point
+    # If we're on linux but /mnt/c exists and points to Users, try Windows roaming path
+    if sys.platform.startswith("linux"):
+        # try typical Linux user config for Code
+        p1 = home / ".config" / "Code" / "User" / "prompts"
+        if p1.exists():
+            return p1
+        # try VS Code OSS path
+        p2 = home / ".config" / "Code - OSS" / "User" / "prompts"
+        if p2.exists():
+            return p2
+        # try WSL mapping to Windows
+        mnt_c = Path("/mnt/c")
+        if mnt_c.exists():
+            # attempt to find any /mnt/c/Users/<name>/AppData/Roaming/Code/User/prompts
+            users_dir = mnt_c / "Users"
+            if users_dir.exists():
+                # pick current username or first match
+                uname = os.environ.get("USER") or os.environ.get("LOGNAME")
+                candidates = []
+                if uname:
+                    candidates.append(
+                        users_dir
+                        / uname
+                        / "AppData"
+                        / "Roaming"
+                        / "Code"
+                        / "User"
+                        / "prompts"
+                    )
+                # also search for any user with AppData
+                try:
+                    for u in users_dir.iterdir():
+                        cand = u / "AppData" / "Roaming" / "Code" / "User" / "prompts"
+                        candidates.append(cand)
+                except Exception:
+                    pass
+                for c in candidates:
+                    if c.exists():
+                        return c
+
+    # macOS
+    if sys.platform == "darwin":
+        p = home / "Library" / "Application Support" / "Code" / "User" / "prompts"
+        if p.exists():
+            return p
+
+    # fallback common locations
+    p_common1 = home / ".config" / "Code" / "User" / "prompts"
+    if p_common1.exists():
+        return p_common1
+    p_common2 = home / ".vscode" / "User" / "prompts"
+    if p_common2.exists():
+        return p_common2
+
+    # best-effort guess: prefer Linux style under home
+    guess = p_common1 if p_common1.parent.exists() else None
+    if guess is not None:
+        return guess
+    raise RuntimeError("Could not detect VS Code prompts directory")
 
 
 def load_config() -> Dict:
@@ -331,7 +412,7 @@ def list_prompts(root: Path, verbose: bool, show_files: bool = False) -> None:
 
     widths = {}
     for c in cols:
-        max_cell = max((len(l) for cell in col_lines[c] for l in cell), default=0)
+        max_cell = max((len(line) for cell in col_lines[c] for line in cell), default=0)
         widths[c] = max(len(c), max_cell)
 
     row_line_counts = [
@@ -378,7 +459,7 @@ def main(argv=None):
         "-y", "--yes", action="store_true", help="Don't prompt for confirmation"
     )
 
-    p_undo = sub.add_parser("undo", help="Undo the last add/remove where possible")
+    sub.add_parser("undo", help="Undo the last add/remove where possible")
 
     p_copy = sub.add_parser("copy", help="Copy a prompt to output file")
     p_copy.add_argument("name", help="Prompt name (with or without suffix)")
@@ -405,10 +486,41 @@ def main(argv=None):
         help="Also show filenames (with and without suffix)",
     )
 
+    p_init = sub.add_parser(
+        "init",
+        help="Detect and set prompts root (try common VS Code User prompts paths)",
+    )
+    p_init.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Don't prompt for confirmation; accept detected path",
+    )
+
     args = parser.parse_args(argv)
 
     cfg = load_config()
     root = get_root(cfg)
+
+    if args.cmd == "init":
+        detected = detect_vscode_user_prompts_path()
+        exists = detected.exists()
+        status = "(exists)" if exists else "(does not exist yet)"
+        if not bool(getattr(args, "yes", False)):
+            ans = input(f"Set prompts root to {detected} {status}? [Y/n]: ")
+            if ans.strip().lower() not in ("y", "yes", ""):
+                print("aborted")
+                return 1
+        # ensure directory exists
+        try:
+            detected.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Failed to create directory {detected}: {e}", file=sys.stderr)
+            return 1
+        cfg["root"] = str(detected)
+        save_config(cfg)
+        print(f"root set to: {detected}")
+        return 0
 
     if args.cmd == "setroot":
         new_root = Path(args.path).expanduser()

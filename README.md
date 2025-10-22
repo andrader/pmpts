@@ -2,31 +2,35 @@
 
 Small CLI to manage VS Code prompt files (move/add/remove/list/rename/undo).
 
-Install / Development
----------------------
+# Quick Start
 
-Run it with uvx
-```bash
-uvx pmpts --help
-```
+Install as an isolated tool with uv
 
-or install as an isolated tool with uv
 ```bash
-uv tool install pmpts
-# then use it
+uv tool install --from git+https://github.com/andrader/pmpts pmpts
+# check installation
 pmpts --help
 ```
 or with plain pip
 
 ```bash
-pip install pmpts
+pip install git+https://github.com/andrader/pmpts
+pmpts --help
 ```
 
-The console script `pmpts` will be available in your environment. Examples:
+# Examples 
 
+List all prompts:
 ```bash
 pmpts list -v
-pmpts add ~/Downloads/my.md
-pmpts rename old-name new-name
 ```
 
+Add a new prompt file to the centered repository:
+```bash
+pmpts add my-prompt.md
+```
+
+Rename a prompt:
+```bash
+pmpts rename old-name new-name
+```
